@@ -11,7 +11,6 @@
 #DEFINE SOCKET_TIMEOUT			 		 15
 #DEFINE HTTP_PACKET_LENGTH  			 8192
 #DEFINE CRLF							 CHR(13)+CHR(10)
-#DEFINE SOCKET_EOT  					 CRLF + CRLF   && End of Transmission sign
 
 DEFINE CLASS winsock AS Form
 	DoCreate = .T.

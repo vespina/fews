@@ -1,4 +1,149 @@
+*
+*  FEWS.PRG
+*  100% FOXPRO EMBEDABLE WEBSERVER
+*
+*  AUTHOR: VICTOR ESPINA
+*
 
+#DEFINE SOCKET_STATE_CLOSED				 0
+#DEFINE SOCKET_STATE_OPEN				 1
+#DEFINE SOCKET_STATE_LISTENING			 2
+#DEFINE SOCKET_STATE_CONNECTIONPENDING	 3
+#DEFINE SOCKET_STATE_RESOLVINGHOST		 4
+#DEFINE SOCKET_STATE_RESOLVED			 5
+#DEFINE SOCKET_STATE_CONNECTIONG		 6
+#DEFINE SOCKET_STATE_CONNECTED		 	 7
+#DEFINE SOCKET_STATE_CLOSING			 8
+#DEFINE SOCKET_STATE_ERROR		 		 9
+#DEFINE SOCKET_TIMEOUT			 		 15
+#DEFINE HTTP_PACKET_LENGTH  			 8192
+#DEFINE CRLF							 CHR(13)+CHR(10)
+
+DEFINE CLASS winsock AS Form
+	DoCreate = .T.
+	Caption = "Winsock"
+	Name = "sck"
+	Visible = .F.
+	Object = NULL
+	
+	cHeaders = ""
+	cContent = ""
+	nContentLength = 0
+	nState = 0
+	
+	ADD OBJECT socket AS oleSocket WITH ;
+		Top = 23, ;
+		Left = 46, ;
+		Height = 100, ;
+		Width = 100, ;
+		Name = "socket"
+
+	PROCEDURE object_access
+		RETURN THIS.Socket.object
+		
+	PROCEDURE cHeaders_Access
+		RETURN THIS.Socket.cHeaders
+
+	PROCEDURE cContent_Access
+		RETURN THIS.Socket.cContent
+		
+	PROCEDURE nContentLength_Access
+		RETURN THIS.Socket.nContentLength			
+
+	PROCEDURE nState_Access
+		RETURN THIS.Socket.State	
+		
+	PROCEDURE SendData
+		LPARAMETERS pcContent
+		LOCAL cPacket,nSent,nContentLengt
+		nSent = 0
+		nContentLength = LEN(pcContent)
+		DO WHILE nSent < nContentLength
+			IF nSent + HTTP_PACKET_LENGTH <= nContentLength
+				cPacket = SUBSTR(pcContent, nSent + 1, HTTP_PACKET_LENGTH)
+			ELSE
+				cPacket = SUBSTR(pcContent, nSent + 1)
+			ENDIF
+			IF THIS.Socket.State <> SOCKET_STATE_CONNECTED
+				THIS.Object.Close()
+				RETURN
+			ENDIF
+			THIS.Object.SendData(cPacket)
+			nSent = nSent + LEN(cPacket)
+		ENDDO
+		?THIS.Object.State
+   	    RETURN		
+
+
+	PROCEDURE Close
+		IF THIS.nState <> SOCKET_STATE_CLOSED
+			THIS.Object.Close()
+		ENDIF
+		RETURN
+ENDDEFINE
+
+DEFINE CLASS oleSocket AS OleControl
+   OleClass = "MSWinsock.Winsock"
+
+   cHeaders = ""
+   cContent = ""
+   nContentLength = ""
+   
+   PROCEDURE Init
+   	  THIS.cHeaders = ""
+   	  THIS.cContent = ""
+   	  THIS.nContentLength = 0
+   	  RETURN
+   	  
+   PROCEDURE Error
+      LPARAMETERS nError, cMethod, nLine
+      ?"[WINSOCK][ERR][" + ALLT(STR(nError)) + "][" + cMethod + ":" + ALLT(Str(nLine)) +"] " + MESSAGE() + Chr(13) + Chr(10)
+      RETURN
+      
+   PROCEDURE Close()
+      THIS.Object.Close()
+      RETURN
+
+   PROCEDURE Destroy
+      THIS.Object.Close()
+      RETURN
+      
+   PROCEDURE DataArrival
+      LPARAMETERS tnByteCount
+      LOCAL lcBuffer,lnEOT
+      lcBuffer = SPACE(tnByteCount)
+      LOCAL cData
+      This.GetData( @lcBuffer, , tnByteCount )
+      
+      *IF ATC("Content-Length:",lcBuffer) > 0 AND EMPTY(THIS.cReceiveBuffer)
+      lnEOT = AT(SOCKET_EOT, lcBuffer)
+      IF lnEOT > 0 AND EMPTY(THIS.cHeaders)
+          THIS.cHeaders = TRANSFORM(CREATEBINARY(LEFT(lcBuffer, lnEOT - 1)))
+          THIS.cContent = TRANSFORM(CREATEBINARY(SUBS(lcBuffer, lnEOT + 4)))
+          cData = MLINE(SUBS(lcBuffer, ATC("Content-Length:",lcBuffer) + 1),1)
+          cData = SUBS(cData, AT(":",cDAta) + 2)
+          THIS.nContentLength = INT(VAL(cData))
+          ?"[WINSOCK][DataArrival][ContentLength]",THIS.nContentLength,LEN(THIS.cHEaders)
+      ELSE
+          cData = TRANSFORM(CREATEBINARY(lcBuffer))  
+          THIS.cContent = THIS.cContent + cData
+          ?"[WINSOCK][DataArrival]",LEN(THIS.cContent),"of",THIS.nContentLength
+      ENDIF        
+      IF LEN(THIS.cContent) >= THIS.nContentLength
+      	THIS.dataReceived()
+      ENDIF       
+      RETURN
+      
+  
+   PROCEDURE DataReceived
+      RETURN
+      
+   PROCEDURE SendComplete
+      IF THIS.state = SOCKET_STATE_CONNECTED
+      	THIS.Close()
+      ENDIF   	           
+      RETURN 
+ENDDEFINE
 DEFINE CLASS webserver AS winsock
 
     cName = "FWS"
@@ -619,3 +764,76 @@ FUNCTION GETWORDCOUNT
 	RETURN OCCURS(pcSep, pcSource) + 1
 #ENDIF
 
+DEFINE CLASS base64Helper AS Custom
+ 
+ 	Version = "1.1"
+ 
+	* Constructor
+	PROCEDURE Init
+		DECLARE INTEGER CryptBinaryToString IN Crypt32;
+			STRING @pbBinary, LONG cbBinary, LONG dwFlags,;
+			STRING @pszString, LONG @pcchString
+
+		DECLARE INTEGER CryptStringToBinary IN crypt32;
+			STRING @pszString, LONG cchString, LONG dwFlags,;
+			STRING @pbBinary, LONG @pcbBinary,;
+			LONG pdwSkip, LONG pdwFlags
+		RETURN
+
+
+	* encodeString
+	* Toma un string y lo convierte en base64
+	*
+	PROCEDURE encodeString(pcString)
+		LOCAL nFlags, nBufsize, cDst
+		nFlags = 1  && base64
+		nBufsize = 0
+		CryptBinaryToString(@pcString, LEN(pcString),m.nFlags, NULL, @nBufsize)
+		cDst = REPLICATE(CHR(0), m.nBufsize)
+		IF CryptBinaryToString(@pcString, LEN(pcString), m.nFlags,@cDst, @nBufsize) = 0
+			RETURN ""
+		ENDIF
+		RETURN cDst
+	 
+	 
+	* decodeString
+	* Toma una cadena en BAse64 y devuelve la cadena original
+	*
+	FUNCTION decodeString(pcB64)
+		LOCAL nFlags, nBufsize, cDst
+		nFlags = 1  && base64
+		nBufsize = 0
+		CryptStringToBinary(@pcB64, LEN(m.pcB64),nFlags, NULL, @nBufsize, 0,0)
+		cDst = REPLICATE(CHR(0), m.nBufsize)
+		IF CryptStringToBinary(@pcB64, LEN(m.pcB64),nFlags, @cDst, @nBufsize, 0,0) = 0
+			RETURN ""
+		ENDIF
+		RETURN m.cDst
+	 
+	 
+	* encodeFile
+	* Toma un archivo y lo codifica en base64
+	*
+	PROCEDURE encodeFile(pcFile, plWebMode)
+		IF NOT FILE(pcFile)
+			RETURN ""
+		ENDIF
+		LOCAL cB64
+		cB64 = THIS.encodeString(FILETOSTR(pcFile))
+		IF plWebMode
+			cB64 = CHRTRAN(STRT(cB64, CHR(13)+CHR(10), "\n"),CHR(0),"")
+		ENDIF
+		RETURN cB64
+	 
+	 
+	* decodeFile
+	* Toma una cadena base64, la decodifica y crea un archivo con el contenido
+	*
+	PROCEDURE decodeFile(pcB64, pcFile)
+		LOCAL cBuff
+		pcB64 = STRT(STRT(STRT(pcB64,"\/","/"),"\u000d",CHR(13)),"\u000a",CHR(10))
+		cBuff = THIS.decodeString(pcB64)
+		STRTOFILE(cBuff, pcFile)
+		RETURN
+ 
+ENDDEFINE
