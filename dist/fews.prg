@@ -5,17 +5,22 @@
 *  AUTHOR: VICTOR ESPINA
 *
 
+****************************************************************************************************
+**                                          WINSOCK.PRG                                           **
+****************************************************************************************************
 #DEFINE SOCKET_STATE_CLOSED				 0
 #DEFINE SOCKET_STATE_OPEN				 1
 #DEFINE SOCKET_STATE_LISTENING			 2
 #DEFINE SOCKET_STATE_CONNECTIONPENDING	 3
 #DEFINE SOCKET_STATE_RESOLVINGHOST		 4
 #DEFINE SOCKET_STATE_RESOLVED			 5
-#DEFINE SOCKET_STATE_CONNECTIONG		 6
+#DEFINE SOCKET_STATE_CONNECTING		     6
 #DEFINE SOCKET_STATE_CONNECTED		 	 7
 #DEFINE SOCKET_STATE_CLOSING			 8
 #DEFINE SOCKET_STATE_ERROR		 		 9
+#DEFINE SOCKET_STATE_CAPTIONS            "CLOSED,OPEN,LISTENING,CONNECTIONPENDING,RESOLVINGHOST,RESOLVED,CONNECTING,CONNECTED,CLOSING,ERROR"
 #DEFINE SOCKET_TIMEOUT			 		 15
+#DEFINE SOCKET_EOT						 CHR(13)+CHR(10)+CHR(13)+CHR(10)
 #DEFINE HTTP_PACKET_LENGTH  			 8192
 #DEFINE CRLF							 CHR(13)+CHR(10)
 
@@ -30,6 +35,7 @@ DEFINE CLASS winsock AS Form
 	cContent = ""
 	nContentLength = 0
 	nState = 0
+	cState = ""
 	
 	ADD OBJECT socket AS oleSocket WITH ;
 		Top = 23, ;
@@ -52,6 +58,9 @@ DEFINE CLASS winsock AS Form
 
 	PROCEDURE nState_Access
 		RETURN THIS.Socket.State	
+		
+	PROCEDURE cState_Access
+	    RETURN GETWORDNUM(SOCKET_STATE_CAPTIONS, THIS.nState + 1)		
 		
 	PROCEDURE SendData
 		LPARAMETERS pcContent
@@ -144,151 +153,12 @@ DEFINE CLASS oleSocket AS OleControl
       ENDIF   	           
       RETURN 
 ENDDEFINE
-DEFINE CLASS webserver AS winsock
+**************************************** END OF WINSOCK.PRG ****************************************
 
-    cName = "FWS"
-	cVersion = "1.0"
-	nPort = 8006
-	cLocalIP = ""
-	nMaxConnections = 5
-	DIMEN aConnPool[1]
-	DIMEN aHandlers[1]
-	nHandlersCount = 0
-	cDocumentsRoot = ""
-	
-	PROCEDURE Init
-		DIMENSION THIS.aConnPool[THIS.nMaxConnections]
-		LOCAL nConn,oConn
-		FOR nConn = 1 TO THIS.nMaxConnections
-		    oConn = CREATE("wsRequest")
-		    WITH oConn
-		    	.nId = nConn
-		    	.Bind(THIS)
-		    ENDWITH
-			THIS.aConnPool[nConn] = oConn
-		ENDFOR
-		THIS.addHandler("*","wsStaticContentHandler")
-		THIS.cDocumentsRoot = SET("DEFAULT") + CURDIR()
-		RETURN
-
-	PROCEDURE cLocalIP_Access
-		RETURN THIS.socket.localIP
-		
-	PROCEDURE Error
-		LPARAMETERS nError, cMethod, nLine
-	     ?"[WEBSERVER][ERR][" + ALLT(STR(nError)) + "][" + cMethod + ":" + ALLT(Str(nLine)) +"] " + MESSAGE() + Chr(13) + Chr(10)
-	     RETURN	
-		
-	PROCEDURE Destroy
-		LOCAL nConn,cOnError
-		cOnError = ON("ERROR")
-		ON ERROR RETURN
-		FOR nConn = 1 TO THIS.nMaxConnections
-			THIS.aConnPool[nConn].Unbind()
-			THIS.aConnPool[nConn] = NULL
-		ENDFOR
-		IF !EMPTY(cOnError)
-			ON ERROR &cOnError
-		ENDIF
-		RETURN
-			
-	PROCEDURE Listen
-	    WITH THIS.socket
-	    	.Protocol = 0  && TCP
-	    	.LocalPort = THIS.nPort
-	    	.Listen()
-	    ENDWITH
-	    ?"Listening on port http://" + THIS.cLocalIP + ":" + ALLT(STR(THIS.nPort))
-		RETURN
-		
-
-	PROCEDURE addHandler
-		LPARAMETERS pcFilter, pcHandlerClass
-		LOCAL nIndex
-		nIndex = THIS.getHandlerIndex(pcFilter)
-		IF nIndex = 0
-			THIS.nHandlersCount = THIS.nHandlersCount + 1
-			DIMEN THIS.aHandlers[THIS.nHandlersCount]
-			nIndex = THIS.nHandlersCount
-		ENDIF
-		THIS.aHandlers[nIndex] = CREATE("wsKVP", LOWER(pcFilter), pcHandlerClass)
-		RETURN
-		
-
-	PROCEDURE getHandlerIndex
-		LPARAMETERS pcFilter
-		LOCAL nIndex,nH
-		nIndex = 0
-		pcFilter = LOWER(pcFilter)
-		FOR nH = 1 TO THIS.nHandlersCount
-			IF THIS.aHandlers[nH].cName == pcFilter
-				nIndex = nH
-				EXIT
-			ENDIF
-		ENDFOR
-		RETURN nIndex
-				
-		
-	PROCEDURE getHandler
-		LPARAMETERS pcFilter
-		LOCAL nIndex,oHandler
-		oHandler = NULL		
-		nIndex = THIS.getHandlerIndex(pcFilter)
-		IF nIndex = 0
-			nIndex = THIS.getHandlerIndex("*")
-		ENDIF
-		IF nIndex > 0
-			oHandler = CREATE( THIS.aHandlers[nIndex].cValue )	
-		ENDIF
-		RETURN oHandler
-
-				
-	PROCEDURE socket.ConnectionRequest
-		LPARAMETERS requestid
-		LOCAL oConn
-		oConn = THISFORM.getAvailConn()
-		IF !ISNULL(oConn)
-			oConn.socket.Accept(requestid)
-			THISFORM.addToLog("Request received. Assigned to connection #" + ALLT(STR(oConn.nID)))
-		ELSE
-			THISFORM.addToLog("Request rejected. No available connections at this time")
-		ENDIF
-		RETURN
-		
-
-	PROCEDURE addToLog
-		LPARAMETERS pcText,pnLevel
-		?DATETIME(),pnLevel,pcText
-		RETURN	
-		
-	PROCEDURE getAvailConn
-		LOCAL oConn, nConn, oAvailConn
-		oAvailConn = NULL
-		FOR nConn = 1 TO THIS.nMaxConnections
-		    oConn = THIS.aConnPool[nConn]
-		    IF oConn.lHandled
-		    	IF oConn.nState = SOCKET_STATE_CONNECTED 
-		    		oConn.Close()
-		    	ENDIF
-		    	oConn.Unbind()
-		    	RELEASE oConn
-		        
-		    	oConn = CREATE("wsRequest")
-		    	oConn.nId = nConn
-		    	oConn.Bind(THIS)
-		    	THIS.aConnPool[nConn] = oConn
-		    ENDIF
-			IF oConn.nState = SOCKET_STATE_CLOSED
-				oAvailConn = THIS.aConnPool[nConn]
-				EXIT
-			ENDIF
-		ENDFOR
-		RETURN oAvailConn
-		
-ENDDEFINE
-
-
-DEFINE CLASS wsRequest AS winsock
+****************************************************************************************************
+**                                        FEWSREQUEST.PRG                                         **
+****************************************************************************************************
+DEFINE CLASS fewsRequest AS winsock
     nId = 0
 	cRawHTTP = ""
 	cVerb = ""
@@ -311,12 +181,14 @@ DEFINE CLASS wsRequest AS winsock
 	oServer = NULL
 	cFilter = ""
 	lHandled = .F.
-	
+	cStatusCode = ""
+
 
 	PROCEDURE Bind
 		LPARAMETERS poServer
 		THIS.oServer = poServer
 		RETURN
+
 		
 	PROCEDURE Unbind
 		THIS.oServer = NULL
@@ -329,29 +201,54 @@ DEFINE CLASS wsRequest AS winsock
 			
 	PROCEDURE socket.DataReceived
 		LPARAMETERS pcHeaders,pcContent
-		THIS.Parent.parseHeaders()
-		THIS.Parent.splitQS() 
-		IF INLIST(LOWER(THIS.Parent.cContentType), "multipart/form-data", "application/x-www-form-urlencoded")
-			THIS.Parent.parseFormData()
-		ENDIF
+		WITH THIS.Parent
+			.oServer.cLastRequest = .cHeaders + CRLF + .cContent
+			.oServer.cLastResponse = ""
+			.oServer.cLastStatusCode = ""
+			.parseHeaders()
+			.splitQS() 
+			IF INLIST(LOWER(.cContentType), "multipart/form-data", "application/x-www-form-urlencoded")
+				.parseFormData()
+			ENDIF
+			.oServer.oHistory.beginRequest(THIS.PArent)
+			.oServer.addToLog("[REQ][" + ALLT(STR(.nId)) + "] " + .cUrl,5)
+			.oServer.addToLog(.cHeaders, 9)
+			IF !EMPTY(.cContent)
+				.oServer.addToLog(LEFT(.cContent, 8192), 9)
+			ENDIF
+			
+			IF _VFP.StartMode = 0
+	            ?REPL("*",100)			
+				?"[CONN #" + ALLT(STR(.nId)) + "]",.nState
+			    ?.cHeaders
+		    ENDIF
 		
-		CLEAR
-		?"[CONN #" + ALLT(STR(THIS.Parent.nId)) + "]",THIS.PArent.nState
-	    ?THIS.PArent.cHeaders
-		
-		LOCAL oResponse
-		THIS.Parent.lHandled = .F.
-		oResponse = THIS.Parent.Handle()
-		IF NOT ISNULL(oResponse)
-		    LOCAL cContent
-		    cContent = oResponse.ToString()
-		    ? 
-		    ?"-----------"
-		    ?"[RESPONSE]"
-		    ?LEFT(cContent,300)
-			THIS.Parent.SendData( CREATEBINARY(cContent) )
-		ENDIF
-		THIS.Parent.lHandled = .T.
+			LOCAL oResponse
+			.lHandled = .F.
+			oResponse = .Handle()
+			IF NOT ISNULL(oResponse)
+			    .oServer.oHistory.completeRequest(oResponse)
+			    .oServer.cLastResponse = oResponse.ToString()
+			    .oServer.cLastStatusCode = oResponse.cStatusCode
+			    .cStatusCode = oResponse.cStatusCode 
+			    IF _VFP.StartMode = 0
+				    ? 
+				    ?"-----------"
+				    ?"[RESPONSE]"
+				    ?LEFT(.oServer.cLastResponse,300)
+			    ENDIF
+			    .oServer.addToLog("[REQ] " + oResponse.cStatusCode + " (" + oResponse.cHanler + ")",5)
+			    .oServer.addToLog(LEFT(.oServer.cLastResponse,8192),9)
+				.SendData( CREATEBINARY(.oServer.cLastResponse) )
+			ELSE
+				IF EMPTY(oResponse.cHandler)
+					.oServer.addToLog("[REQ][ERR] An appropiate handler could not be found (" + THIS.PArent.cUrl + ")",1)
+				ELSE
+					.oServer.addToLog("[REQ][ERR][" + oREsponse.cHandler + "] an appropiate response could not be generated",1)
+				ENDIF	
+			ENDIF
+			.lHandled = .T.
+		ENDWITH
 		RETURN
 		
 
@@ -360,18 +257,25 @@ DEFINE CLASS wsRequest AS winsock
 	    LOCAL oResponse,oHandler
 	    oResponse = CREATE("wsResponse")
 		IF ISNULL(THIS.oServer)
-		    oResponse.cStatusCode = "501 Not Implemented"
+		    oResponse.cStatusCode = "503 Service Unavailable"
 			RETURN oResponse
 		ENDIF
 		oResponse.cServerName = THIS.oServer.cName + " " + THIS.oServer.cVersion
-		oHandler = THIS.oServer.getHandler(THIS.cFilter)
+		DO CASE
+		   CASE THIS.lCORSPreflighrt
+		        oHandler = CREATE("fewsCORSHandler")
+		
+		   OTHERWISE		
+		   		oHandler = THIS.oServer.getHandler(THIS.cFilter)
+		ENDCASE
 		IF ISNULL(oHandler)
 		    oResponse.cStatusCode = "501 Not Implemented"
 			RETURN oResponse		
 		ENDIF
+		oResponse.cHandler = oHandler.Name
 		oHandler.oRequest = THIS
 		oHandler.oResponse = oResponse
-		oHandler.Process()
+		oHandler.Process()		
 		RETURN oResponse
 
 
@@ -393,8 +297,7 @@ DEFINE CLASS wsRequest AS winsock
 		LPARAMETERS pcName,pcDefault
 		LOCAL cValue,nHdr
 		cValue = IIF(PCOUNT() = 1,"",pcDefault)
-		pcName = ALLT(LOWER(pcName))
-		
+		pcName = ALLT(LOWER(pcName))		
 	    FOR nHdr = 1 TO THIS.nQSCount
 	    	IF THIS.aQS[nHdr].cName == pcName
 	    		cValue = THIS.aQS[nHdr].cValue
@@ -408,8 +311,7 @@ DEFINE CLASS wsRequest AS winsock
 		LPARAMETERS pcName,pcDefault
 		LOCAL cValue,nFD
 		cValue = IIF(PCOUNT() = 1,"",pcDefault)
-		pcName = ALLT(LOWER(pcName))
-		
+		pcName = ALLT(LOWER(pcName))	
 	    FOR nFD = 1 TO THIS.nFDCount
 	    	IF THIS.aFDD[nFD].cName == pcName
 	    		cValue = THIS.aFD[nFD].cValue
@@ -421,8 +323,8 @@ DEFINE CLASS wsRequest AS winsock
 		
 	PROCEDURE addToLog
 		LPARAMETERS pcText,pnLevel
-		?DATETIME(),pnLevel,pcText
-		RETURN	
+		RETURN THIS.oServer.addToLog(pcText, pnLevel)
+
 				
 *!*	   PROCEDURE socket.DataArrival
 *!*	      LPARAMETERS tnByteCount
@@ -541,16 +443,25 @@ DEFINE CLASS wsRequest AS winsock
 		ENDIF
 		RETURN
 						
+						
+							
 ENDDEFINE
 
+************************************** END OF FEWSREQUEST.PRG **************************************
 
-DEFINE CLASS wsResponse AS Custom
+****************************************************************************************************
+**                                        FEWSRESPONSE.PRG                                        **
+****************************************************************************************************
+DEFINE CLASS fewsResponse AS Custom
 	
 	cStatusCode = "200 OK"
 	cContentType = "text/html"
 	nContentLength = 0
 	cContent = ""
 	cServerName = ""
+	cHandler = ""
+	lCORSPreflight = .F.
+	cCORSOrigin = ""
 
 	PROCEDURE Init
 	  LPARAMETERS pcStatusCode, pcContentType, pcContent
@@ -597,30 +508,52 @@ DEFINE CLASS wsResponse AS Custom
 	  	THIS.initWithData(pcStatusCode, pcContentType, pcContent)
 	  ENDIF
       LOCAL cREsponse
-	  cResponse = [HTTP/1.1 ] + THIS.cStatusCode + CRLF + ;
-				  [Cache-Control: private] + CRLF + ;
-				  [Content-Type: ] + THIS.cContentType + CRLF + ;
-				  [Content-length: ] + ALLT(STR(THIS.nContentLength)) + CRLF + ;
-				  [Server: ] + THIS.cServerName + CRLF + ;
-				  [Access-Control-Allow-Origin: *] + CRLF + ;
-				  [Access-Control-Allow-Headers: Content-Type] + CRLF + ;
-				  [Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS] + CRLF + ;
-				  [Date: ]+ T2GMT(DATETIME()) + CRLF + ;
-				  CRLF + ;
-				  THIS.cContent
+      cResponse = ""
+      DO CASE
+         CASE THIS.lCORSPreFlight
+              cResponse = [HTTP/1.1 200 OK] + ;
+						  [Content-Length: 0] + ;
+						  [Connection: keep-alive] + ;
+						  [Access-Control-Allow-Origin: ] + THIS.cCORSOrigin + ;
+						  [Access-Control-Allow-Methods: POST, OPTIONS] + ;
+						  [Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With] + ;
+						  [Access-Control-Max-Age: 86400] 
+						  
+         OTHERWISE
+			  cResponse = [HTTP/1.1 ] + THIS.cStatusCode + CRLF + ;
+						  [Cache-Control: private] + CRLF + ;
+						  [Content-Type: ] + THIS.cContentType + CRLF + ;
+						  [Content-length: ] + ALLT(STR(THIS.nContentLength)) + CRLF + ;
+						  [Server: ] + THIS.cServerName + CRLF + ;
+						  [Access-Control-Allow-Origin: *] + CRLF + ;
+						  [Access-Control-Allow-Headers: Content-Type] + CRLF + ;
+						  [Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS] + CRLF + ;
+						  [Date: ]+ T2GMT(DATETIME()) + CRLF + ;
+						  CRLF + ;
+						  THIS.cContent
+	  ENDCASE					  
 	  RETURN cResponse    
 ENDDEFINE
 
+************************************* END OF FEWSRESPONSE.PRG **************************************
 
-DEFINE CLASS wsHandlerAbstract AS Custom
+****************************************************************************************************
+**                                    FEWSHANDLERABSTRACT.PRG                                     **
+****************************************************************************************************
+DEFINE CLASS fewsHandlerAbstract AS Custom
 	oRequest = NULL
 	oResponse = NULL
 	PROCEDURE Process
 		RETURN
 ENDDEFINE
 
+********************************** END OF FEWSHANDLERABSTRACT.PRG **********************************
 
-DEFINE CLASS wsStaticContentHandler AS wsHandlerAbstract
+****************************************************************************************************
+**                                  FEWSSTATICCONTENTHANDLER.PRG                                  **
+****************************************************************************************************
+DEFINE CLASS fewsStaticContentHandler AS fewsHandlerAbstract
+    Name = "staticContentHandler"
     oB64 = NULL
     
     PROCEDURE Init
@@ -673,8 +606,29 @@ DEFINE CLASS wsStaticContentHandler AS wsHandlerAbstract
 		RETURN
 ENDDEFINE
 
+******************************* END OF FEWSSTATICCONTENTHANDLER.PRG ********************************
 
+****************************************************************************************************
+**                                      FEWSCORSHANDLER.PRG                                       **
+****************************************************************************************************
+DEFINE CLASS fewsCORSHandler AS fewsHandlerAbstract
 
+	PROCEDURE Process
+	    LOCAL oReq,oResp
+	    oReq = THIS.oRequest
+	    oResp = THIS.oResponse
+	    WITH oResp
+	    	.lCORSPreflight = .T.
+	    	.lCORSOrigin = oReq.cOrigin
+	    ENDWITH
+	    RETURN
+	
+ENDDEFINE
+************************************ END OF FEWSCORSHANDLER.PRG ************************************
+
+****************************************************************************************************
+**                                          SUPPORT.PRG                                           **
+****************************************************************************************************
 DEFINE CLASS wsKVP AS Custom
 	cName = ""
 	cValue = ""
@@ -685,6 +639,7 @@ DEFINE CLASS wsKVP AS Custom
 	PROCEDURE ToString
 		RETURN THIS.cName + ": " + THIS.cValue
 ENDDEFINE
+
 
 
 
@@ -762,8 +717,19 @@ FUNCTION GETWORDCOUNT
 	LPARAMETERS pcSource, pcSep	
 	pcSep = IIF(VARTYPE(pcSep)<>"C",",",pcSep)
 	RETURN OCCURS(pcSep, pcSource) + 1
+
+
+FUNCTION EVL
+	LPARAMETERS puValue, puDEfault
+	RETURN IIF(EMPTY(puValue),puDEfault,puValue)
+	
 #ENDIF
 
+**************************************** END OF SUPPORT.PRG ****************************************
+
+****************************************************************************************************
+**                                        BASE64HELPER.PRG                                        **
+****************************************************************************************************
 DEFINE CLASS base64Helper AS Custom
  
  	Version = "1.1"
@@ -837,3 +803,282 @@ DEFINE CLASS base64Helper AS Custom
 		RETURN
  
 ENDDEFINE
+
+************************************* END OF BASE64HELPER.PRG **************************************
+
+****************************************************************************************************
+**                                     FEWSHISTORYMANAGER.PRG                                     **
+****************************************************************************************************
+DEFINE CLASS fewsHistoryManager AS Custom
+	cDataFile = ""
+	oEntry = NULL
+	
+	PROCEDURE beginRequest
+		LPARAMETERS poRequest
+		THIS.oEntry = CREATE("fewsHistoryEntry")
+		WITH THIS.oEntry
+		    .nConnId = poRequest.nId
+			.tReceived = DATETIME()
+			.nSecs = SECONDS()
+			.cUrl = poRequest.cUrl
+			.cRemoteHost = poRequest.socket.remoteHost
+			.cRemoteIP = poRequest.socket.remoteHostIP
+			.nRemotePort = poRequest.socket.remotePort
+			.cQS = poRequest.cQueryString
+		ENDWITH
+		RETURN
+		
+		
+	PROCEDURE completeRequest
+		LPARAMETERS poResponse
+		IF ISNULL(THIS.oEntry)
+			RETURN
+		ENDIF
+		WITH THIS.oEntry
+			.tSent = DATETIME()
+			.nSecs = SECONDS() - .nSecs
+			.cResponse = poResponse.cStatusCode
+			.cHandler = poResponse.cHandler
+		ENDWITH
+		LOCAL nFH
+		IF FILE(THIS.cDataFile)
+			nFH = FOPEN(THIS.cDataFile,11)
+			IF nFH > 0
+				FSEEK(nFH,0,2)
+			ENDIF
+		ELSE
+			nFH = FCREATE(THIS.cDataFile)
+		ENDIF
+		IF nFH < 0
+			RETURN
+		ENDIF
+		FWRITE(nFH, THIS.oEntry.ToString() + CRLF)
+		FCLOSE(nFH)
+		RETURN
+		
+		
+
+ENDDEFINE
+
+DEFINE CLASS fewsHistoryEntry AS Custom
+    nConnID = 0
+	tReceived = {//::}
+	cRemoteHost = ""
+	nRemotePort = ""
+	cRemoteIP = ""
+	cUrl = ""
+	cQS = ""
+	cResponse = ""
+	cHandler = ""
+	tSent = {//::}
+	nSecs = 0
+	
+	PROCEDURE ToString
+		RETURN TTOC(THIS.tReceived) + "|" + ;
+		       ALLT(STR(THIS.nConnID)) + "|" + ;
+		       THIS.cRemoteIP + ":" + ALLT(STR(THIS.nRemotePort)) + IIF(EMPTY(THIS.cRemoteHost),"|"," (" + THIS.cRemoteHost + ")|") + ;
+		       LOWER(THIS.cUrl) + "|" + ;
+		       THIS.cQS + "|" +;
+		       THIS.cHandler + "|" + ;
+		       ALLT(TRANS(THIS.nSecs,"999.999"))+"s" + "|" + ;
+		       THIS.cResponse 
+ENDDEFINE	
+********************************** END OF FEWSHISTORYMANAGER.PRG ***********************************
+
+****************************************************************************************************
+**                                         FEWSSERVER.PRG                                         **
+****************************************************************************************************
+
+DEFINE CLASS fewsServer AS winsock
+
+    cName = "FEWS"
+	cVersion = "1.0"
+	nPort = 8006
+	cLocalIP = ""
+	nMaxConnections = 5
+	DIMEN aConnPool[1]
+	DIMEN aHandlers[1]
+	nHandlersCount = 0
+	cDocumentsRoot = ""
+	cLastRequest = ""
+	cLastResponse = ""
+	cLastStatusCode = ""
+	oHistory = NULL
+	cLogFolder = ""
+	nLogLevel = 9
+	
+	PROCEDURE Init
+		DIMENSION THIS.aConnPool[THIS.nMaxConnections]
+		LOCAL nConn,oConn
+		FOR nConn = 1 TO THIS.nMaxConnections
+		    oConn = CREATE("fwwsRequest")
+		    WITH oConn
+		    	.nId = nConn
+		    	.Bind(THIS)
+		    ENDWITH
+			THIS.aConnPool[nConn] = oConn
+		ENDFOR
+		THIS.addHandler("*","fewsStaticContentHandler")
+		THIS.cDocumentsRoot = SET("DEFAULT") + CURDIR()
+		THIS.oHistory = CREATE("fewsHistoryManager")
+		THIS.cLogFolder = THIS.cDocumentsRoot
+		RETURN
+
+	PROCEDURE cLocalIP_Access
+		RETURN THIS.socket.localIP
+		
+	PROCEDURE Error
+		LPARAMETERS nError, cMethod, nLine
+	     THIS.addToLog("[SRV][ERR][" + ALLT(STR(nError)) + "][" + cMethod + ":" + ALLT(Str(nLine)) +"] " + MESSAGE(),1)
+	     RETURN	
+		
+	PROCEDURE Destroy
+		LOCAL nConn,cOnError
+		cOnError = ON("ERROR")
+		ON ERROR RETURN
+		FOR nConn = 1 TO THIS.nMaxConnections
+			THIS.aConnPool[nConn].Unbind()
+			THIS.aConnPool[nConn] = NULL
+		ENDFOR
+		IF !EMPTY(cOnError)
+			ON ERROR &cOnError
+		ELSE
+			ON ERROR	
+		ENDIF
+		RETURN
+			
+	PROCEDURE Listen
+	    THIS.oHistory.cDataFile = ADDBS(THIS.cLogFolder) + "fews_history.log" 
+	    WITH THIS.socket
+	    	.Protocol = 0  && TCP
+	    	.LocalPort = THIS.nPort
+	    	.Listen()
+	    ENDWITH
+	    THIS.addToLog("[SRV] Listening on http://" + THIS.cLocalIP + ":" + ALLT(STR(THIS.nPort)),5)
+		RETURN
+		
+
+	PROCEDURE addHandler
+		LPARAMETERS pcFilter, pcHandlerClass
+		LOCAL nIndex
+		nIndex = THIS.getHandlerIndex(pcFilter)
+		IF nIndex = 0
+			THIS.nHandlersCount = THIS.nHandlersCount + 1
+			DIMEN THIS.aHandlers[THIS.nHandlersCount]
+			nIndex = THIS.nHandlersCount
+		ENDIF
+		THIS.aHandlers[nIndex] = CREATE("wsKVP", LOWER(pcFilter), pcHandlerClass)
+		RETURN
+		
+
+	PROCEDURE getHandlerIndex
+		LPARAMETERS pcFilter
+		LOCAL nIndex,nH
+		nIndex = 0
+		pcFilter = LOWER(pcFilter)
+		FOR nH = 1 TO THIS.nHandlersCount
+			IF THIS.aHandlers[nH].cName == pcFilter
+				nIndex = nH
+				EXIT
+			ENDIF
+		ENDFOR
+		RETURN nIndex
+				
+		
+	PROCEDURE getHandler
+		LPARAMETERS pcFilter
+		LOCAL nIndex,oHandler
+		oHandler = NULL		
+		nIndex = THIS.getHandlerIndex(pcFilter)
+		IF nIndex = 0
+			nIndex = THIS.getHandlerIndex("*")
+		ENDIF
+		IF nIndex > 0
+			oHandler = CREATE( THIS.aHandlers[nIndex].cValue )	
+		ENDIF
+		RETURN oHandler
+
+				
+	PROCEDURE socket.ConnectionRequest
+		LPARAMETERS requestid
+		THIS.Parent.addToLog("[SVR] Request received from " + THIS.remoteHostHost + " (" + THIS.remoteHostIP + "), ID:" + TRANS(requestid,""),5)
+		LOCAL oConn
+		oConn = THISFORM.getAvailConn()
+		IF !ISNULL(oConn)
+			oConn.socket.Accept(requestid)
+			THIS.Parent.addToLog("[SVR] Assigned to connection #" + ALLT(STR(oConn.nID)), 5)
+		ELSE
+			THIS.Parent.addToLog("[SVR] No available connections at this time",1)
+			LOCAL ARRAY aCPS[1]
+			FOR oConn = 1 TO ALINES(aCPS, THIS.Parent.getConnPoolState())
+				THIS.PArent.addToLog("[SVR] " + aCPS[oConn],1)
+			ENDFOR
+		ENDIF
+		RETURN
+		
+
+
+	PROCEDURE getAvailConn
+		LOCAL oConn, nConn, oAvailConn
+		oAvailConn = NULL
+		FOR nConn = 1 TO THIS.nMaxConnections
+		    oConn = THIS.aConnPool[nConn]
+		    IF oConn.lHandled
+		    	IF INLIST(oConn.nState,SOCKET_STATE_CONNECTED,SOCKET_STATE_CLOSING)
+		    		oConn.Object.Close()
+		    	ENDIF
+		    	oConn.Unbind()
+		    	RELEASE oConn		        
+		    	oConn = CREATE("fewsRequest")
+		    	oConn.nId = nConn
+		    	oConn.Bind(THIS)
+		    	THIS.aConnPool[nConn] = oConn
+		    ENDIF
+			IF oConn.nState = SOCKET_STATE_CLOSED
+				oAvailConn = THIS.aConnPool[nConn]
+				EXIT
+			ENDIF
+		ENDFOR
+		RETURN oAvailConn
+
+
+
+	PROCEDURE addToLog
+		LPARAMETERS pcText,pnLevel
+		LOCAL cLogFile
+		cLogFile = ADDBS(THIS.cLogFolder) + "fews.log"
+		pnLevel = EVL(pnLevel, 9)
+		IF pnLevel > THIS.nLogLevel
+			RETURN
+		ENDIF
+		IF !FILE(cLogFile)
+			FCLOSE(FCREATE(cLogFile))
+		ENDIF
+		LOCAL nFH
+		nFH = FOPEN(cLogFile,11)
+		FSEEK(nFH,0,2)
+		FWRITE(nFH,"[" + TTOC(DATETIME()) + "][" + ALLT(STR(pnLevel)) + "] " + pcText + CRLF)
+		FCLOSE(nFH)
+		IF _VFP.startMode = 0
+			?DATETIME(),pnLevel,pcText
+		ENDIF
+		RETURN	
+		
+				
+		
+	PROCEDURE getConnPoolState
+		LOCAL cState,nConn,oConn
+		cState = ""
+		FOR nConn = 1 TO THIS.nMaxConnections
+		    oConn = THIS.aConnPool[nConn]
+			cState = cState + ;
+			         ALLT(STR(oConn.nId)) + "," + ;
+			         oConn.cState + "," + ;
+			         oConn.cUrl + "," + ;
+			         oConn.cStatusCode + CRLF
+		ENDFOR
+		RETURN cState
+ENDDEFINE
+
+************************************** END OF FEWSSERVER.PRG ***************************************
+

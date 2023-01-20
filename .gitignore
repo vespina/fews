@@ -67,7 +67,7 @@
 /IMG/Thumbs.db
 *.DLL
 *.dll
-
+*.log
 test*.*
 p*.*
 *.dat
