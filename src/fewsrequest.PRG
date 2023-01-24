@@ -41,6 +41,8 @@ DEFINE CLASS fewsRequest AS winsock
 			
 	PROCEDURE socket.DataReceived
 		LPARAMETERS pcHeaders,pcContent
+		LOCAL oDelegate
+		oDelegate = THIS.PArent.oServer.oDelegate
 		WITH THIS.Parent
 			.oServer.cLastRequest = .cHeaders + CRLF + .cContent
 			.oServer.cLastResponse = ""
@@ -57,37 +59,47 @@ DEFINE CLASS fewsRequest AS winsock
 				.oServer.addToLog(LEFT(.cContent, 8192), 9)
 			ENDIF
 			
-			IF _VFP.StartMode = 0
+			IF _VFP.StartMode = 0 AND .oServer.lDebugMode
 	            ?REPL("*",100)			
 				?"[CONN #" + ALLT(STR(.nId)) + "]",.nState
 			    ?.cHeaders
 		    ENDIF
-		
-			LOCAL oResponse
-			.lHandled = .F.
-			oResponse = .Handle()
-			IF NOT ISNULL(oResponse)
-			    .oServer.oHistory.completeRequest(oResponse)
-			    .oServer.cLastResponse = oResponse.ToString()
-			    .oServer.cLastStatusCode = oResponse.cStatusCode
-			    .cStatusCode = oResponse.cStatusCode 
-			    IF _VFP.StartMode = 0
-				    ? 
-				    ?"-----------"
-				    ?"[RESPONSE]"
-				    ?LEFT(.oServer.cLastResponse,300)
-			    ENDIF
-			    .oServer.addToLog("[REQ] " + oResponse.cStatusCode + " (" + oResponse.cHanler + ")",5)
-			    .oServer.addToLog(LEFT(.oServer.cLastResponse,8192),9)
-				.SendData( CREATEBINARY(.oServer.cLastResponse) )
-			ELSE
-				IF EMPTY(oResponse.cHandler)
-					.oServer.addToLog("[REQ][ERR] An appropiate handler could not be found (" + THIS.PArent.cUrl + ")",1)
-				ELSE
-					.oServer.addToLog("[REQ][ERR][" + oREsponse.cHandler + "] an appropiate response could not be generated",1)
-				ENDIF	
-			ENDIF
-			.lHandled = .T.
+		    
+		    LOCAL oResponse
+		    oResponse = CREATE("fewsResponse")
+		    lHandled = .F.
+		    IF oDelegate.onBeforeHandleRequest(THIS.Parent)
+		    	oResponse = .Handle()
+		    	IF NOT ISNULL(oResponse)
+		    		.lHandled = .T.
+		    		oDelegate.onBeforeResponse(oResponse)
+		    	ELSE
+					IF EMPTY(oResponse.cHandler)
+						.oServer.addToLog("[REQ][ERR] An appropiate handler could not be found (" + THIS.PArent.cUrl + ")",1)
+						oResponse.initWithData("422 Unprocessable Entity")
+					ELSE
+						.oServer.addToLog("[REQ][ERR][" + oREsponse.cHandler + "] an appropiate response could not be generated",1)
+			            oResponse.initWithData("400 Bad Request")		
+					ENDIF			    	
+		    	ENDIF
+		    ELSE
+		    	oResponse.initWithData("403 Forbidden")
+		    ENDIF
+		    .oServer.oHistory.completeRequest(oResponse)
+		    .oServer.cLastResponse = oResponse.ToString()
+		    .oServer.cLastStatusCode = oResponse.cStatusCode
+		    oDelegate.onConsole(.oServer.oHistory.oEntry.ToString(2))
+		    oDelegate.onRequestHandled(THIS.PArent, oResponse)
+		    .cStatusCode = oResponse.cStatusCode 
+		    IF _VFP.StartMode = 0 AND .oServer.lDebugMode
+			    ? 
+			    ?"-----------"
+			    ?"[RESPONSE]"
+			    ?LEFT(.oServer.cLastResponse,300)
+		    ENDIF
+		    .oServer.addToLog("[REQ] " + oResponse.cStatusCode + " (" + oResponse.cHandler + ")",5)
+		    .oServer.addToLog(LEFT(.oServer.cLastResponse,8192),9)
+			.SendData( CREATEBINARY(.oServer.cLastResponse) )	
 		ENDWITH
 		RETURN
 		
@@ -95,14 +107,14 @@ DEFINE CLASS fewsRequest AS winsock
 
 	PROCEDURE Handle
 	    LOCAL oResponse,oHandler
-	    oResponse = CREATE("wsResponse")
+	    oResponse = CREATE("fewsResponse")
 		IF ISNULL(THIS.oServer)
 		    oResponse.cStatusCode = "503 Service Unavailable"
 			RETURN oResponse
 		ENDIF
 		oResponse.cServerName = THIS.oServer.cName + " " + THIS.oServer.cVersion
 		DO CASE
-		   CASE THIS.lCORSPreflighrt
+		   CASE THIS.lCORSPreflight
 		        oHandler = CREATE("fewsCORSHandler")
 		
 		   OTHERWISE		

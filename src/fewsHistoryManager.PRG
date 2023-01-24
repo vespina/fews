@@ -63,12 +63,26 @@ DEFINE CLASS fewsHistoryEntry AS Custom
 	nSecs = 0
 	
 	PROCEDURE ToString
-		RETURN TTOC(THIS.tReceived) + "|" + ;
-		       ALLT(STR(THIS.nConnID)) + "|" + ;
-		       THIS.cRemoteIP + ":" + ALLT(STR(THIS.nRemotePort)) + IIF(EMPTY(THIS.cRemoteHost),"|"," (" + THIS.cRemoteHost + ")|") + ;
-		       LOWER(THIS.cUrl) + "|" + ;
-		       THIS.cQS + "|" +;
-		       THIS.cHandler + "|" + ;
-		       ALLT(TRANS(THIS.nSecs,"999.999"))+"s" + "|" + ;
-		       THIS.cResponse 
+	    LPARAMETER pnFormat
+	    pnFormat = EVL(pnFormat, 1)
+	    LOCAL cResp
+	    cResp = ""
+	    DO CASE
+	       CASE pnFormat = 1
+	            cResp = TTOC(THIS.tReceived) + "|" + ;
+				        ALLT(STR(THIS.nConnID)) + "|" + ;
+				        THIS.cRemoteIP + ":" + ALLT(STR(THIS.nRemotePort)) + IIF(EMPTY(THIS.cRemoteHost),"|"," (" + THIS.cRemoteHost + ")|") + ;
+				        LOWER(THIS.cUrl) + "|" + ;
+				        THIS.cQS + "|" +;
+				        THIS.cHandler + "|" + ;
+				        ALLT(TRANS(THIS.nSecs,"999.999"))+"s" + "|" + ;
+				        THIS.cResponse
+				        
+		   CASE pnFormat = 2
+		        cResp = "[" + TTOC(THIS.tReceived) + "] " + ;
+		                LOWER(THIS.cUrl) + " " + ;
+		                THIS.cResponse + " " + ;
+		                "(" + ALLT(TRANS(THIS.nSecs,"999.999"))+"s)"
+	    ENDCASE
+		RETURN cREsp 
 ENDDEFINE	

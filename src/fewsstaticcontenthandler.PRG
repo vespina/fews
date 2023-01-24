@@ -46,7 +46,6 @@ DEFINE CLASS fewsStaticContentHandler AS fewsHandlerAbstract
 	    	   	    oResp.initWithData("200 OK","application/octet-stream", cContent)	
 	    	ENDCASE
 	    ELSE
-	        ?"[404] " + cLocalFile
 	    	oResp.cStatusCode = "404 NOT FOUND"
 	    ENDIF
 		RETURN

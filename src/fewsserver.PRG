@@ -8,6 +8,7 @@ DEFINE CLASS fewsServer AS winsock
 	nMaxConnections = 5
 	DIMEN aConnPool[1]
 	DIMEN aHandlers[1]
+	oDelegate = NULL
 	nHandlersCount = 0
 	cDocumentsRoot = ""
 	cLastRequest = ""
@@ -15,13 +16,15 @@ DEFINE CLASS fewsServer AS winsock
 	cLastStatusCode = ""
 	oHistory = NULL
 	cLogFolder = ""
-	nLogLevel = 9
-	
-	PROCEDURE Init
+	nLogLevel = 1
+	lDebugMode = .F.
+		
+	PROCEDURE Init	   
 		DIMENSION THIS.aConnPool[THIS.nMaxConnections]
 		LOCAL nConn,oConn
+		THIS.oDelegate = CREATE("fewsDefaultServerDelegate")		
 		FOR nConn = 1 TO THIS.nMaxConnections
-		    oConn = CREATE("fwwsRequest")
+		    oConn = CREATE("fewsRequest")
 		    WITH oConn
 		    	.nId = nConn
 		    	.Bind(THIS)
@@ -39,17 +42,17 @@ DEFINE CLASS fewsServer AS winsock
 		
 	PROCEDURE Error
 		LPARAMETERS nError, cMethod, nLine
-	     THIS.addToLog("[SRV][ERR][" + ALLT(STR(nError)) + "][" + cMethod + ":" + ALLT(Str(nLine)) +"] " + MESSAGE(),1)
-	     RETURN	
+		LOCAL cEntry
+		cEntry = "[SRV][ERR][" + ALLT(STR(nError)) + "][" + cMethod + ":" + ALLT(Str(nLine)) +"] " + MESSAGE()
+	    THIS.addToLog(cEntry,1)
+	    THIS.onConsole(cEntry)
+	    RETURN	
 		
 	PROCEDURE Destroy
 		LOCAL nConn,cOnError
 		cOnError = ON("ERROR")
 		ON ERROR RETURN
-		FOR nConn = 1 TO THIS.nMaxConnections
-			THIS.aConnPool[nConn].Unbind()
-			THIS.aConnPool[nConn] = NULL
-		ENDFOR
+		THIS.purgeConnPool(.T.)
 		IF !EMPTY(cOnError)
 			ON ERROR &cOnError
 		ELSE
@@ -57,14 +60,22 @@ DEFINE CLASS fewsServer AS winsock
 		ENDIF
 		RETURN
 			
-	PROCEDURE Listen
+	PROCEDURE Start
 	    THIS.oHistory.cDataFile = ADDBS(THIS.cLogFolder) + "fews_history.log" 
 	    WITH THIS.socket
 	    	.Protocol = 0  && TCP
 	    	.LocalPort = THIS.nPort
 	    	.Listen()
 	    ENDWITH
-	    THIS.addToLog("[SRV] Listening on http://" + THIS.cLocalIP + ":" + ALLT(STR(THIS.nPort)),5)
+	    THIS.addToLog("[SRV] Listening on http://" + THIS.cLocalIP + ":" + ALLT(STR(THIS.nPort)),1)
+		RETURN
+		
+		
+	PROCEDURE Stop
+		THIS.addToLog("[SVR] Stopping server...",1)
+		THIS.Close()
+		THIS.purgeConnPool()
+		THIS.addToLog("[SVR] Stopped",1)
 		RETURN
 		
 
@@ -111,12 +122,18 @@ DEFINE CLASS fewsServer AS winsock
 				
 	PROCEDURE socket.ConnectionRequest
 		LPARAMETERS requestid
-		THIS.Parent.addToLog("[SVR] Request received from " + THIS.remoteHostHost + " (" + THIS.remoteHostIP + "), ID:" + TRANS(requestid,""),5)
+		LOCAL oDelegate
+		oDelegate = THIS.PArent.oDelegate
+		THIS.Parent.addToLog("[SVR] Request received from " + THIS.remoteHost + " (" + THIS.remoteHostIP + "), ID:" + TRANS(requestid,""),5)
 		LOCAL oConn
 		oConn = THISFORM.getAvailConn()
 		IF !ISNULL(oConn)
-			oConn.socket.Accept(requestid)
-			THIS.Parent.addToLog("[SVR] Assigned to connection #" + ALLT(STR(oConn.nID)), 5)
+		    IF oDelegate.onRequest(THIS.remoteHost, THIS.remoteHostIP)
+				oConn.socket.Accept(requestid)
+				oConn.addToLog("[SVR] Assigned to connection #" + ALLT(STR(oConn.nID)), 5)
+			ELSE
+				THIS.Parent.addToLog("[SVR] Connection rejected",1)
+			ENDIF
 		ELSE
 			THIS.Parent.addToLog("[SVR] No available connections at this time",1)
 			LOCAL ARRAY aCPS[1]
@@ -169,9 +186,7 @@ DEFINE CLASS fewsServer AS winsock
 		FSEEK(nFH,0,2)
 		FWRITE(nFH,"[" + TTOC(DATETIME()) + "][" + ALLT(STR(pnLevel)) + "] " + pcText + CRLF)
 		FCLOSE(nFH)
-		IF _VFP.startMode = 0
-			?DATETIME(),pnLevel,pcText
-		ENDIF
+		THIS.oDelegate.onConsole("[" + TTOC(DATETIME()) + "] " + pcText)
 		RETURN	
 		
 				
@@ -188,4 +203,52 @@ DEFINE CLASS fewsServer AS winsock
 			         oConn.cStatusCode + CRLF
 		ENDFOR
 		RETURN cState
+		
+		
+	PROCEDURE purgeConnPool
+	    LPARAMETERS plClearAll
+	    LOCAL nConn,oConn
+		FOR nConn = 1 TO THIS.nMaxConnections
+	        oConn = THIS.aConnPool[nConn]	
+		    IF INLIST(oConn.nState,SOCKET_STATE_CONNECTED,SOCKET_STATE_CLOSING)
+		     	oConn.Object.Close()
+		    ENDIF
+			oConn.Unbind()
+			RELEASE oConn		    
+		    IF plClearAll
+			    THIS.aConnPool[nConn] = NULL
+			ELSE
+		    	oConn = CREATE("fewsRequest")
+		    	oConn.nId = nConn
+		    	oConn.Bind(THIS)
+		    	THIS.aConnPool[nConn] = oConn			
+			ENDIF    
+		ENDFOR
+	    RETURN		
+	    
+	
+    PROCEDURE onConsole(pcEntry)
+    	RETUR THIS.oDelegate.onConsole(pcEntry)
+    	
+	PROCEDURE onBeginRequest(pcHost,pcIP)
+		RETURN THIS.oDelegate.onBeginRequest(pcHost, pcIP)
+		
+	PROCEDURE onBeforeHandleRequest(poRequest)
+		RETURN THIS.onBeforeHandleRequest(poRequest)
+		
+	PROCEDURE onBeforeResponse(poResponse)
+		RETURN THIS.onBeforeResponse(poResponse)
+	
+ENDDEFINE
+
+DEFINE CLASS fewsServerDelegate AS Custom
+
+    PROCEDURE onConsole(pcEntry)
+	PROCEDURE onRequest(pcHost,pcIP)
+	PROCEDURE onBeforeHandleRequest(poRequest)
+	PROCEDURE onBeforeResponse(poResponse)
+	PROCEDURE onRequestHandled(poRequest, poResponse)
+ENDDEFINE
+
+DEFINE CLASS fewsDefaultServerDelegate AS fewsServerDelegate
 ENDDEFINE

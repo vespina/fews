@@ -70,7 +70,6 @@ DEFINE CLASS winsock AS Form
 			THIS.Object.SendData(cPacket)
 			nSent = nSent + LEN(cPacket)
 		ENDDO
-		?THIS.Object.State
    	    RETURN		
 
 
@@ -121,12 +120,12 @@ DEFINE CLASS oleSocket AS OleControl
           THIS.cContent = TRANSFORM(CREATEBINARY(SUBS(lcBuffer, lnEOT + 4)))
           cData = MLINE(SUBS(lcBuffer, ATC("Content-Length:",lcBuffer) + 1),1)
           cData = SUBS(cData, AT(":",cDAta) + 2)
-          THIS.nContentLength = INT(VAL(cData))
-          ?"[WINSOCK][DataArrival][ContentLength]",THIS.nContentLength,LEN(THIS.cHEaders)
+          THIS.nContentLength = INT(VAL(cData))  
+          *?"[WINSOCK][DataArrival][ContentLength]",THIS.nContentLength,LEN(THIS.cHEaders)
       ELSE
           cData = TRANSFORM(CREATEBINARY(lcBuffer))  
           THIS.cContent = THIS.cContent + cData
-          ?"[WINSOCK][DataArrival]",LEN(THIS.cContent),"of",THIS.nContentLength
+          *?"[WINSOCK][DataArrival]",LEN(THIS.cContent),"of",THIS.nContentLength
       ENDIF        
       IF LEN(THIS.cContent) >= THIS.nContentLength
       	THIS.dataReceived()
